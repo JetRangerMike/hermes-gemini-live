@@ -1140,8 +1140,11 @@ function createGeminiLiveEngine(env) {
       env.rpc('tools.show', { session_id: sid }, 15000),
       env.rpc('mcp.servers.status', {}, 10000).catch(() => null)
     ])
+    if (!Array.isArray(shown?.sections)) {
+      throw new Error('The Hermes gateway returned no tool catalogue.')
+    }
     const states = new Map(((status && status.servers) || []).map(row => [row.name, row]))
-    const servers = ((shown && shown.sections) || [])
+    const servers = shown.sections
       .filter(section => String(section.name || '').startsWith('mcp-'))
       .map(section => {
         const name = section.name.slice(4)
@@ -2132,7 +2135,7 @@ function createGeminiLiveEngine(env) {
   }
 
   const CLIENT_TOOLS = {
-    async list_mcp_tools(args) {
+    async list_mcp_tools(args, item) {
       const servers = await loadMcpCatalog(true)
       const want = String(args.server || '').trim().toLowerCase()
       const picked = want ? servers.filter(s => s.server.toLowerCase() === want) : servers
@@ -2141,13 +2144,25 @@ function createGeminiLiveEngine(env) {
         return { error: `No MCP server named ${args.server}.`, servers: servers.map(s => s.server) }
       }
 
+      const toolCount = picked.reduce((total, server) => total + server.tools.length, 0)
+      const summary = `${toolCount} MCP ${toolCount === 1 ? 'tool' : 'tools'} across ${picked.length} ${picked.length === 1 ? 'server' : 'servers'}`
+      const toolLimit = want ? 24 : 5
+      item.detail = `${summary}${picked.length ? ` · ${picked.map(s => s.server).join(', ')}` : ''}`
+
       return {
+        summary,
         servers: picked.map(s => ({
           server: s.server,
           status: s.status,
-          tools: want ? s.tools : s.tools.slice(0, 40).map(t => t.name),
-          more: want ? undefined : Math.max(0, s.tools.length - 40) || undefined
-        }))
+          tool_count: s.tools.length,
+          tools: want ? s.tools.slice(0, toolLimit) : s.tools.slice(0, toolLimit).map(t => t.name),
+          more: Math.max(0, s.tools.length - toolLimit) || undefined
+        })),
+        ...(picked.some(s => s.tools.length > toolLimit) ? {
+          note: want
+            ? 'The tools shown are a sample. Use ask_hermes for a task requiring a tool outside this sample.'
+            : 'This is a sample of tool names. Pass the exact server name to see descriptions.'
+        } : {})
       }
     },
 
@@ -2474,6 +2489,8 @@ function createGeminiLiveEngine(env) {
     goodbyeNudged = false
     quotaStep = 0
     noSearch = false
+    mcpCache = null
+    mcpBrief = []
     pendingNotices.length = 0
     set({
       phase: 'connecting',

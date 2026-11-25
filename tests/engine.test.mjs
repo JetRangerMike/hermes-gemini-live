@@ -379,6 +379,31 @@ test('MCP: the catalog rides into the session, list shows servers, use runs a on
   await t.engine.stop()
 })
 
+test('MCP: a large server stays structured and Activity reports the actual counts', async () => {
+  installBrowserFakes()
+  const gateway = fakeGateway()
+  const rpc = gateway.rpc
+  const tools = Array.from({ length: 234 }, (_, index) => ({
+    name: `mcp_m365_personal_calendar_operation_${index}`,
+    description: 'Read-only calendar operation. '.repeat(8)
+  }))
+  gateway.rpc = (method, params) => method === 'tools.show'
+    ? Promise.resolve({ sections: [{ name: 'mcp-m365_personal', tools }] })
+    : rpc(method, params)
+  const t = makeEngine({ gateway })
+  await t.engine.start({})
+  const socket = t.sockets()[0]
+  const inventory = await call(socket, 'list_mcp_tools', {})
+  assert.equal(inventory.servers[0].tool_count, 234)
+  assert.equal(inventory.servers[0].tools.length, 5)
+  const detail = await call(socket, 'list_mcp_tools', { server: 'm365_personal' })
+  assert.equal(detail.servers[0].tool_count, 234)
+  assert.equal(detail.servers[0].tools.length, 24)
+  assert.equal(detail.servers[0].more, 210)
+  assert.match(t.engine.snapshot().activity.at(-1).detail, /234 MCP tools.*m365_personal/)
+  await t.engine.stop()
+})
+
 test('a cancelled tool call gets no reply', async () => {
   installBrowserFakes()
   const t = makeEngine()
