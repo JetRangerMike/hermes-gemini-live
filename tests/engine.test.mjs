@@ -70,6 +70,7 @@ function fakeGateway() {
       case 'prompt.submit':
         return { status: 'accepted' }
       case 'tools.show':
+        if (!params.session_id) throw new Error('invalid_params')
         return { sections: [
           { name: 'file', tools: [{ name: 'read_file', description: 'Read a file.' }] },
           { name: 'mcp-ledger', tools: [{ name: 'mcp_ledger_search', description: 'Search diary days.' }, { name: 'mcp_ledger_get_day', description: 'One day.' }] }
@@ -88,7 +89,7 @@ function fakeGateway() {
   return { calls, emit, rpc, state, onEvent: fn => (listeners.add(fn), () => listeners.delete(fn)) }
 }
 
-function makeEngine({ script = {}, gateway = fakeGateway(), restCalls = [], agentName, voiceApproval } = {}) {
+function makeEngine({ script = {}, gateway = fakeGateway(), restCalls = [], agentName, voiceApproval, focusedSessionId = 'live-1' } = {}) {
   const { createGeminiLiveEngine } = loadEngine()
   globalThis.WebSocket = fakeSocketClass(script)
   globalThis.WebSocket.all = []
@@ -117,7 +118,8 @@ function makeEngine({ script = {}, gateway = fakeGateway(), restCalls = [], agen
     rest,
     rpc: gateway.rpc,
     onEvent: gateway.onEvent,
-    focus: () => ({ sessionId: 'live-1' }),
+    focus: () => ({ sessionId: focusedSessionId }),
+    ensureSession: async () => (await gateway.rpc('session.create', {})).session_id,
     gestures: () => Boolean(engine && engine._env_gestures),
     submitToChat: (sid, text) => (composer.push({ sid, text }), true),
     chatContext: async () => ({ chat_title: 'Fix the build', recent: [] })
@@ -338,6 +340,18 @@ test('run_readonly sends the call transcript to the reviewer and shows a refusal
   const row = t.engine.snapshot().activity.at(-1)
   assert.equal(row.status, 'error')
   assert.match(row.detail, /Refused \(safety review\): That could print secrets/)
+  await t.engine.stop()
+})
+
+test('MCP: starting without a focused chat uses a live session for discovery', async () => {
+  installBrowserFakes()
+  const t = makeEngine({ focusedSessionId: '' })
+  await t.engine.start({})
+  const createIndex = t.gateway.calls.findIndex(c => c.method === 'session.create')
+  const toolsIndex = t.gateway.calls.findIndex(c => c.method === 'tools.show')
+  assert.ok(createIndex >= 0 && createIndex < toolsIndex)
+  assert.equal(t.gateway.calls[toolsIndex].params.session_id, 'live-1')
+  assert.equal(t.restCalls[0].body.context.mcp[0].server, 'ledger')
   await t.engine.stop()
 })
 

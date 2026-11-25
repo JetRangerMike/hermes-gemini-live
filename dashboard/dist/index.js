@@ -1149,9 +1149,12 @@
         return mcpCache.servers
       }
 
-      const sid = (env.focus && env.focus().sessionId) || ''
+      const sid = (env.focus && env.focus().sessionId) || await env.ensureSession?.()
+      if (!sid) {
+        throw new Error('MCP tool discovery needs a live Hermes session.')
+      }
       const [shown, status] = await Promise.all([
-        env.rpc('tools.show', sid ? { session_id: sid } : {}, 15000),
+        env.rpc('tools.show', { session_id: sid }, 15000),
         env.rpc('mcp.servers.status', {}, 10000).catch(() => null)
       ])
       const states = new Map(((status && status.servers) || []).map(row => [row.name, row]))
